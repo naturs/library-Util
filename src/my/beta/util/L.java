@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *******************************************************************************/
-package my.beta.util.disklrucache;
+package my.beta.util;
 
 import android.util.Log;
 
@@ -22,6 +22,7 @@ public final class L {
 	private static final String LOG_FORMAT = "%1$s\n%2$s";
 	private static volatile boolean writeDebugLogs = true;
 	private static volatile boolean writeLogs = true;
+	private static volatile String logTag = "L";
 
 	private L() {
 	}
@@ -39,6 +40,10 @@ public final class L {
 	/** Enables/disables logging of {@link ImageLoader} completely (even error logs). */
 	public static void writeLogs(boolean writeLogs) {
 		L.writeLogs = writeLogs;
+	}
+	
+	public static void writeLogTag(String tag) {
+		L.logTag = tag;
 	}
 
 	public static void d(String message, Object... args) {
@@ -81,6 +86,6 @@ public final class L {
 			String logBody = Log.getStackTraceString(ex);
 			log = String.format(LOG_FORMAT, logMessage, logBody);
 		}
-		Log.println(priority, DiskLruCache.LOG_TAG, log);
+		Log.println(priority, logTag, log);
 	}
 }
