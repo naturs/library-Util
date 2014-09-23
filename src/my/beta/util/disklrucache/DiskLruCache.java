@@ -96,7 +96,13 @@ public final class DiskLruCache implements Closeable {
 	static final long ANY_SEQUENCE_NUMBER = -1;
 	static final String STRING_KEY_PATTERN = "[a-z0-9_-]{1,120}";
 	static final Pattern LEGAL_KEY_PATTERN = Pattern.compile(STRING_KEY_PATTERN);
+	/**
+	 * 只有在缓存文件夹下确实存在一个正确的缓存文件，该文件才会被标记为CLEAN.
+	 */
 	private static final String CLEAN = "CLEAN";
+	/**
+	 * 在写缓存的开始写入该记录
+	 */
 	private static final String DIRTY = "DIRTY";
 	private static final String REMOVE = "REMOVE";
 	private static final String READ = "READ";
@@ -565,9 +571,13 @@ public final class DiskLruCache implements Closeable {
 			for (int i = 0; i < valueCount; i++) {
 				if (!editor.written[i]) { // 说明没有outputStream，即没有向里面写数据
 					editor.abort();
-					throw new IllegalStateException(
-							"Newly created entry didn't create value for index " + i);
+					IllegalStateException e = new IllegalStateException(
+							"Newly created entry didn't create value for index " + i + ", key=" + entry.key);
+					L.e(e);
+					throw e;
 				}
+				// 写缓存时都是先写入dirty file中，然后把dirty file重命名为clean file，
+				// 所以，如果是success，但是没有对应的dirty file，证明提交不成功。
 				if (!entry.getDirtyFile(i).exists()) {
 					editor.abort();
 					return;
@@ -581,18 +591,27 @@ public final class DiskLruCache implements Closeable {
 				if (dirty.exists()) {
 					File clean = entry.getCleanFile(i);
 					dirty.renameTo(clean);
+					// 如果是新的缓存文件，该值为0
 					long oldLength = entry.lengths[i];
 					long newLength = clean.length();
 					entry.lengths[i] = newLength;
 					size = size - oldLength + newLength;
 				}
 			} else {
+				// 仅仅将dirty file删除了，说明如果是覆盖已有的缓存文件数据，
+				// 但是失败了情况下，不会影响该条数据。
 				deleteIfExists(dirty);
 			}
 		}
 
 		redundantOpCount++;
 		entry.currentEditor = null;
+		
+		// 可以向已经存在的缓存中写入新的数据，也可以写入新的缓存文件
+		
+		// 如果是第一种情况，但写入失败了，也在记录中加入一条该key值的CLEAN记录，
+		// 因为在一开始就写入了该key值的DIRTY记录，如果失败了，我们只是没有更改
+		// 该缓存文件中的值，但该文件本身是完整的、正确的。
 		if (entry.readable | success) {
 			entry.readable = true;
 			journalWriter.write(CLEAN + ' ' + entry.key + entry.getLengths() + '\n');
@@ -600,6 +619,8 @@ public final class DiskLruCache implements Closeable {
 				entry.sequenceNumber = nextSequenceNumber++;
 			}
 		} else {
+			// 写入新的缓存文件失败，相当于放弃了该条缓存数据，但在journal文件中有
+			// 该key值的DIRTY记录，所以在这里写入一个REMOVE记录。
 			lruEntries.remove(entry.key);
 			journalWriter.write(REMOVE + ' ' + entry.key + '\n');
 		}
@@ -691,8 +712,7 @@ public final class DiskLruCache implements Closeable {
 	
 	private void trimToSize() throws IOException {
 		while (size > maxSize) {
-			Map.Entry<String, Entry> toEvict = lruEntries.entrySet().iterator()
-					.next();
+			Map.Entry<String, Entry> toEvict = lruEntries.entrySet().iterator().next();
 			remove(toEvict.getKey());
 		}
 	}
@@ -844,6 +864,8 @@ public final class DiskLruCache implements Closeable {
 				if (!entry.readable) {
 					written[index] = true;
 				}
+				
+				// 向dirty file中写数据
 				File dirtyFile = entry.getDirtyFile(index);
 				FileOutputStream outputStream;
 				try {
